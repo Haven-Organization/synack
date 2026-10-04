@@ -489,8 +489,15 @@ class FileResponder(Responder):
         self.hs = hs
         self.open_file = open_file
 
+        # If set, only this many bytes (from the file's current position) are
+        # sent, rather than reading through to EOF. Set by callers that have
+        # already seeked `open_file` to serve a `Range` request.
+        self.max_size: int | None = None
+
     def write_to_consumer(self, consumer: IConsumer) -> Deferred:
-        return ThreadedFileSender(self.hs).beginFileTransfer(self.open_file, consumer)
+        return ThreadedFileSender(self.hs).beginFileTransfer(
+            self.open_file, consumer, max_size=self.max_size
+        )
 
     def __exit__(
         self,

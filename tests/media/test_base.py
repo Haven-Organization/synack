@@ -20,7 +20,12 @@
 
 from unittest.mock import Mock
 
-from synapse.media._base import add_file_headers, get_filename_from_headers
+from synapse.media._base import (
+    RangeNotSatisfiable,
+    _parse_range_header,
+    add_file_headers,
+    get_filename_from_headers,
+)
 
 from tests import unittest
 
@@ -86,3 +91,63 @@ class AddFileHeadersTests(unittest.TestCase):
         request.reset_mock()
         add_file_headers(request, "text/html", 0, None)
         request.setHeader.assert_any_call(b"Content-Disposition", b"attachment")
+
+
+class ParseRangeHeaderTests(unittest.TestCase):
+    FILE_SIZE = 1000
+
+    def test_range_is_honoured(self) -> None:
+        cases = {
+            "bytes=0-99": (0, 99),
+            "bytes=100-199": (100, 199),
+            # No end: goes to the end of the file.
+            "bytes=900-": (900, 999),
+            # No start: a suffix range, the last N bytes.
+            "bytes=-100": (900, 999),
+            # End beyond the file size is clamped to the last byte.
+            "bytes=990-2000": (990, 999),
+            # The whole file, spelled out explicitly.
+            "bytes=0-999": (0, 999),
+            # Leading/trailing whitespace is tolerated.
+            " bytes=0-99 ": (0, 99),
+        }
+        for range_header, expected in cases.items():
+            self.assertEqual(
+                _parse_range_header(range_header, self.FILE_SIZE),
+                expected,
+                range_header,
+            )
+
+    def test_missing_or_unparseable_range_is_ignored(self) -> None:
+        # These should be treated as if no Range header were sent at all,
+        # i.e. the full file should be served with a 200 response.
+        cases = [
+            "",
+            "bytes=",
+            "bytes=-",
+            "items=0-99",
+            "bytes=0-99,200-299",
+            "bytes=abc-99",
+        ]
+        for range_header in cases:
+            self.assertIsNone(
+                _parse_range_header(range_header, self.FILE_SIZE), range_header
+            )
+
+    def test_unsatisfiable_range_raises(self) -> None:
+        cases = [
+            # Start beyond the end of the file.
+            "bytes=1000-1099",
+            "bytes=2000-3000",
+            # Start after end.
+            "bytes=500-100",
+            # A zero-length suffix is meaningless.
+            "bytes=-0",
+        ]
+        for range_header in cases:
+            self.assertRaises(
+                RangeNotSatisfiable,
+                _parse_range_header,
+                range_header,
+                self.FILE_SIZE,
+            )

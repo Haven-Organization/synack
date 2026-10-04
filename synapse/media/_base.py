@@ -22,6 +22,7 @@
 
 import logging
 import os
+import re
 import urllib
 from abc import ABC, abstractmethod
 from types import TracebackType
@@ -125,6 +126,70 @@ def respond_404(request: SynapseRequest) -> None:
         request,
         404,
         cs_error("Not found '%s'" % (request.path.decode(),), code=Codes.NOT_FOUND),
+        send_cors=True,
+    )
+
+
+class RangeNotSatisfiable(Exception):
+    """Raised when a `Range` request header is a syntactically valid single
+    byte-range, but is out of bounds for the file being served."""
+
+
+# Matches a single-range `Range: bytes=<start>-<end>` header, per RFC 7233.
+# `start` and/or `end` may be omitted (but not both) to mean "to the end of
+# the file" or "the last N bytes" respectively. Multi-range requests (e.g.
+# `bytes=0-10,20-30`) don't match and are treated as if no header was sent.
+_RANGE_HEADER_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int] | None:
+    """Parse a `Range` request header against a known file size.
+
+    Only a single byte-range is supported, which is all that browsers send
+    when seeking within audio/video. Anything else is treated as though the
+    header was absent: RFC 7233 section 3.1 allows a server to ignore `Range`
+    and return the full representation with a 200 response.
+
+    Returns:
+        (start, end) inclusive byte offsets to serve, or None if the header
+        should be ignored and the full file served instead.
+
+    Raises:
+        RangeNotSatisfiable: the header is a single byte-range, but it is out
+            of bounds for `file_size`.
+    """
+    match = _RANGE_HEADER_PATTERN.match(range_header.strip())
+    if not match:
+        return None
+
+    start_str, end_str = match.group(1), match.group(2)
+    if not start_str and not end_str:
+        return None
+
+    if not start_str:
+        # A suffix range, e.g. `bytes=-500` means "the last 500 bytes".
+        suffix_length = int(end_str)
+        if suffix_length == 0:
+            raise RangeNotSatisfiable()
+        start = max(file_size - suffix_length, 0)
+        end = file_size - 1
+    else:
+        start = int(start_str)
+        end = int(end_str) if end_str else file_size - 1
+
+    if start >= file_size or start > end:
+        raise RangeNotSatisfiable()
+
+    end = min(end, file_size - 1)
+    return start, end
+
+
+def respond_with_416(request: SynapseRequest, file_size: int) -> None:
+    request.setHeader(b"Content-Range", b"bytes */%d" % (file_size,))
+    respond_with_json(
+        request,
+        416,
+        cs_error("Requested Range Not Satisfiable", code=Codes.UNKNOWN),
         send_cors=True,
     )
 
@@ -421,7 +486,46 @@ async def respond_with_responder(
             return
 
         logger.debug("Responding to media request with responder %s", responder)
-        add_file_headers(request, media_type, file_size, upload_name)
+
+        # Only responders backed by a local file on disk support cheaply
+        # seeking to serve a byte range: import locally to avoid a circular
+        # import (media_storage imports from this module).
+        from synapse.media.media_storage import FileResponder
+
+        is_local_file = isinstance(responder, FileResponder)
+        response_file_size = file_size
+        range_bounds: tuple[int, int] | None = None
+
+        if is_local_file and file_size is not None:
+            range_header = request.getHeader("Range")
+            if range_header is not None:
+                try:
+                    range_bounds = _parse_range_header(range_header, file_size)
+                except RangeNotSatisfiable:
+                    respond_with_416(request, file_size)
+                    return
+
+        if range_bounds is not None:
+            start, end = range_bounds
+            assert isinstance(responder, FileResponder)
+            responder.open_file.seek(start)
+            response_file_size = end - start + 1
+            responder.max_size = response_file_size
+
+        add_file_headers(request, media_type, response_file_size, upload_name)
+
+        if is_local_file:
+            request.setHeader(b"Accept-Ranges", b"bytes")
+
+        if range_bounds is not None:
+            start, end = range_bounds
+            # `range_bounds` is only ever set below a `file_size is not None` check.
+            assert file_size is not None
+            request.setResponseCode(206)
+            request.setHeader(
+                b"Content-Range", b"bytes %d-%d/%d" % (start, end, file_size)
+            )
+
         try:
             await responder.write_to_consumer(request)
         except ConsumerRequestedStopError as e:
@@ -469,6 +573,17 @@ def check_for_cached_entry_and_respond(request: SynapseRequest) -> bool:
     # is a "conditional request" and we can just return a `304 Not Modified`
     # response. Since media is immutable (though may be deleted), we just
     # check this is the expected constant.
+    #
+    # The ETag is a fixed constant for all media rather than being derived
+    # from a specific byte range, so it can't tell us whether the client
+    # actually has the *requested* range cached. Per RFC 7233 ยง3.2,
+    # `If-None-Match` takes priority over `Range` (RFC 7233 section 3.2) and
+    # a match here would produce an empty 304 response that silently
+    # discards the requested range, so skip the shortcut on ranged requests
+    # and let them be served for real instead.
+    if request.getHeader("Range") is not None:
+        return False
+
     etag = request.getHeader("If-None-Match")
     if etag == _IMMUTABLE_ETAG:
         # Return a `304 Not modified`.
@@ -708,6 +823,11 @@ class ThreadedFileSender:
         self.deferred: "Deferred[None]" = Deferred()
         self.consumer: Optional[IConsumer] = None
 
+        # If set, stop after this many bytes have been read from `file`,
+        # rather than reading through to EOF. Used to serve a `Range` request
+        # from a given start offset.
+        self.bytes_remaining: int | None = None
+
         # Signals if the thread should keep reading/sending data. Set means
         # continue, clear means pause.
         self.wakeup_event = DeferredEvent(self.clock)
@@ -717,13 +837,23 @@ class ThreadedFileSender:
         self.stop_writing = False
 
     def beginFileTransfer(
-        self, file: BinaryIO, consumer: interfaces.IConsumer
+        self,
+        file: BinaryIO,
+        consumer: interfaces.IConsumer,
+        max_size: int | None = None,
     ) -> "Deferred[None]":
         """
         Begin transferring a file
+
+        Args:
+            file: The file to read from, starting at its current position.
+            consumer: The consumer to stream into.
+            max_size: If set, stop after this many bytes have been sent,
+                rather than reading through to EOF.
         """
         self.file = file
         self.consumer = consumer
+        self.bytes_remaining = max_size
 
         self.consumer.registerProducer(self, True)
 
@@ -792,9 +922,18 @@ class ThreadedFileSender:
             # The file should always have been set before we get here.
             assert self.file is not None
 
-            chunk = self.file.read(self.CHUNK_SIZE)
+            read_size = self.CHUNK_SIZE
+            if self.bytes_remaining is not None:
+                if self.bytes_remaining <= 0:
+                    return False
+                read_size = min(read_size, self.bytes_remaining)
+
+            chunk = self.file.read(read_size)
             if not chunk:
                 return False
+
+            if self.bytes_remaining is not None:
+                self.bytes_remaining -= len(chunk)
 
             self.reactor.callFromThread(self._write, chunk)
 

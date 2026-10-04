@@ -2908,6 +2908,148 @@ class AuthenticatedMediaTestCase(unittest.HomeserverTestCase):
         self.assertEqual(channel3.code, 404)
 
 
+class MediaDownloadRangeTestCase(unittest.HomeserverTestCase):
+    """Tests for HTTP `Range` request support when downloading locally-stored
+    media, e.g. used by Chromium-based clients (Element Desktop) to seek
+    within videos.
+    """
+
+    servlets = [
+        media.register_servlets,
+        login.register_servlets,
+        admin.register_servlets,
+    ]
+
+    def make_homeserver(self, reactor: MemoryReactor, clock: Clock) -> HomeServer:
+        config = self.default_config()
+        self.media_store_path = self.mktemp()
+        os.mkdir(self.media_store_path)
+        config["media_store_path"] = self.media_store_path
+        return self.setup_test_homeserver(config=config)
+
+    def create_resource_dict(self) -> dict[str, Resource]:
+        resources = super().create_resource_dict()
+        resources["/_matrix/media"] = self.hs.get_media_repository_resource()
+        return resources
+
+    def prepare(self, reactor: MemoryReactor, clock: Clock, hs: HomeServer) -> None:
+        self.user = self.register_user("user", "pass")
+        self.tok = self.login("user", "pass")
+
+        # Distinctive content so slicing it in the test is easy to verify.
+        self.content = bytes(range(256)) * 4
+
+        channel = self.make_request(
+            "POST",
+            "/_matrix/media/v3/upload?filename=test.mp4",
+            self.content,
+            self.tok,
+            shorthand=False,
+            content_type=b"video/mp4",
+        )
+        self.assertEqual(channel.code, 200)
+        content_uri = channel.json_body.get("content_uri")
+        assert content_uri is not None
+        uri = content_uri.split("mxc://")[1]
+        self.download_path = f"/_matrix/client/v1/media/download/{uri}"
+
+    def test_no_range_header_returns_full_content(self) -> None:
+        channel = self.make_request(
+            "GET", self.download_path, access_token=self.tok, shorthand=False
+        )
+        self.assertEqual(channel.code, 200)
+        self.assertEqual(channel.result["body"], self.content)
+        self.assertEqual(channel.headers.getRawHeaders(b"Accept-Ranges"), [b"bytes"])
+
+    def test_range_request_with_matching_etag_is_still_served(self) -> None:
+        """A `Range` request carrying a matching `If-None-Match` must not be
+        short-circuited into an empty 304 - our ETag is a fixed constant for
+        all media, so it can't tell us the client actually has the
+        *requested* range cached."""
+        channel = self.make_request(
+            "GET",
+            self.download_path,
+            access_token=self.tok,
+            shorthand=False,
+            custom_headers=[("Range", "bytes=10-19"), ("If-None-Match", "1")],
+        )
+        self.assertEqual(channel.code, 206)
+        self.assertEqual(channel.result["body"], self.content[10:20])
+
+    def test_range_request_returns_partial_content(self) -> None:
+        channel = self.make_request(
+            "GET",
+            self.download_path,
+            access_token=self.tok,
+            shorthand=False,
+            custom_headers=[("Range", "bytes=10-19")],
+        )
+        self.assertEqual(channel.code, 206)
+        self.assertEqual(
+            channel.headers.getRawHeaders(b"Content-Range"),
+            [f"bytes 10-19/{len(self.content)}".encode("ascii")],
+        )
+        self.assertEqual(channel.headers.getRawHeaders(b"Content-Length"), [b"10"])
+        self.assertEqual(channel.result["body"], self.content[10:20])
+
+    def test_range_request_with_no_end_goes_to_eof(self) -> None:
+        channel = self.make_request(
+            "GET",
+            self.download_path,
+            access_token=self.tok,
+            shorthand=False,
+            custom_headers=[("Range", "bytes=1000-")],
+        )
+        self.assertEqual(channel.code, 206)
+        self.assertEqual(channel.result["body"], self.content[1000:])
+
+    def test_suffix_range_request(self) -> None:
+        channel = self.make_request(
+            "GET",
+            self.download_path,
+            access_token=self.tok,
+            shorthand=False,
+            custom_headers=[("Range", "bytes=-10")],
+        )
+        self.assertEqual(channel.code, 206)
+        self.assertEqual(
+            channel.headers.getRawHeaders(b"Content-Range"),
+            [
+                f"bytes {len(self.content) - 10}-{len(self.content) - 1}/{len(self.content)}".encode(
+                    "ascii"
+                )
+            ],
+        )
+        self.assertEqual(channel.result["body"], self.content[-10:])
+
+    def test_unsatisfiable_range_returns_416(self) -> None:
+        channel = self.make_request(
+            "GET",
+            self.download_path,
+            access_token=self.tok,
+            shorthand=False,
+            custom_headers=[("Range", f"bytes={len(self.content) + 100}-")],
+        )
+        self.assertEqual(channel.code, 416)
+        self.assertEqual(
+            channel.headers.getRawHeaders(b"Content-Range"),
+            [f"bytes */{len(self.content)}".encode("ascii")],
+        )
+
+    def test_multi_range_request_is_ignored(self) -> None:
+        """We don't support multipart ranges: per RFC 7233 a server may just
+        ignore the header and return the full file with a 200."""
+        channel = self.make_request(
+            "GET",
+            self.download_path,
+            access_token=self.tok,
+            shorthand=False,
+            custom_headers=[("Range", "bytes=0-9,20-29")],
+        )
+        self.assertEqual(channel.code, 200)
+        self.assertEqual(channel.result["body"], self.content)
+
+
 class MediaUploadLimits(unittest.HomeserverTestCase):
     """
     This test case simulates a homeserver with media upload limits configured.
