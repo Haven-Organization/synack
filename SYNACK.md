@@ -15,6 +15,12 @@ how those patches are tracked and how new upstream releases are merged.
 Files that exist only in SynACK: `README.md`, `SYNACK.md`, `.synack/`,
 `scripts-dev/synack-sync-upstream.sh`, and a block at the end of `.gitignore`.
 
+`.github/dependabot.yml` is deleted in SynACK. Dependency updates arrive
+through upstream release merges, so the fork does not take separate Dependabot
+pull requests. If upstream changes that file, the merge reports a
+modify/delete conflict; resolve it by keeping the file deleted
+(`git rm .github/dependabot.yml`).
+
 ## Seeing what SynACK changes
 
 ```sh
