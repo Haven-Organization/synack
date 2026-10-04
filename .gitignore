@@ -81,3 +81,28 @@ book/
 
 # Don't include users' poetry configs
 /poetry.toml
+
+# SynACK: deployment files that can hold credentials or private data.
+# Upstream only ignores these at the repository root; ignore them anywhere.
+.env
+.env.*
+homeserver*.yaml.bak*
+homeserver*.yaml.orig
+*.signing.key
+*.signing.key.*
+*.log.config
+*.pem
+*.p12
+*.pfx
+*.macaroon_secret
+/secrets/
+/local/
+/workers/
+/conf.d/
+/media/
+/synapse_media/
+/*.sql
+/*.sql.gz
+/*.dump
+# Patch files exported for other servers.
+/*.patch
