@@ -128,6 +128,11 @@ class ThumbnailResource(RestServlet):
                 return
 
             ip_address = request.getClientAddress().host
+            # Fetch remote media via the authenticated federation endpoint
+            # (using our own federation signing key) even though this
+            # client-facing endpoint itself stays fully unauthenticated - the
+            # deprecated unauthenticated cross-server endpoint is no longer
+            # served by many homeservers (e.g. matrix.org since Sept 2024).
             if self.dynamic_thumbnails:
                 await self.thumbnail_provider.select_or_generate_remote_thumbnail(
                     request,
@@ -139,7 +144,7 @@ class ThumbnailResource(RestServlet):
                     m_type,
                     max_timeout_ms,
                     ip_address,
-                    use_federation=False,
+                    use_federation=True,
                     allow_authenticated=False,
                     animated=animated,
                 )
@@ -154,7 +159,7 @@ class ThumbnailResource(RestServlet):
                     m_type,
                     max_timeout_ms,
                     ip_address,
-                    use_federation=False,
+                    use_federation=True,
                     allow_authenticated=False,
                 )
             self.media_repo.mark_recently_accessed(server_name, media_id)

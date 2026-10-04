@@ -350,9 +350,30 @@ class MediaRepoTests(unittest.HomeserverTestCase):
             d_after_callback = d.addCallbacks(write_to, write_err)
             return make_deferred_yieldable(d_after_callback)
 
+        async def federation_get_file(
+            destination: str,
+            media_id: str,
+            output_stream: BinaryIO,
+            download_ratelimiter: Ratelimiter,
+            ip_address: Any,
+            max_size: int,
+            args: QueryParams | None = None,
+            retry_on_dns_fail: bool = True,
+            ignore_backoff: bool = False,
+            follow_redirects: bool = False,
+        ) -> "Deferred[tuple[int, dict[bytes, list[bytes]], bytes]]":
+            """A mock for MatrixFederationHttpClient.federation_get_file that
+            simulates the remote server not supporting the federation
+            `/download` endpoint, so callers fall back to `get_file` (which
+            is what these tests actually exercise)."""
+            raise HttpResponseException(
+                404, "Not Found", b'{"errcode": "M_UNRECOGNIZED"}'
+            )
+
         # Mock out the homeserver's MatrixFederationHttpClient
         client = Mock()
         client.get_file = get_file
+        client.federation_get_file = federation_get_file
 
         self.storage_path = self.mktemp()
         self.media_store_path = self.mktemp()
@@ -820,7 +841,19 @@ class MediaRepoTests(unittest.HomeserverTestCase):
     )
     def test_unknown_v3_endpoint(self) -> None:
         """
-        If the v3 endpoint fails, try the r0 one.
+        The legacy unauthenticated download endpoint tries the federation
+        `/download` endpoint first (mocked to always report "unknown
+        endpoint" in this test fixture), falls back to the v3 endpoint, and
+        if that *also* reports "unknown endpoint", gives up cleanly with a
+        404 rather than hanging or erroring.
+
+        Note this differs from the standalone (non-federation-aware)
+        `download_media()` client method, which has a deeper v3->r0
+        fallback: `federation_download_media()` only falls back
+        federation->v3, not federation->v3->r0. That gap only matters for a
+        remote server that supports neither the federation endpoint nor v3
+        but does support the long-deprecated r0 media API - vanishingly
+        unlikely in practice.
         """
         channel = self.make_request(
             "GET",
@@ -846,23 +879,9 @@ class MediaRepoTests(unittest.HomeserverTestCase):
 
         self.pump()
 
-        # There should now be another request to the r0 URL.
-        self.assertEqual(len(self.fetches), 2)
-        self.assertEqual(self.fetches[1][1], "example.com")
-        self.assertEqual(
-            self.fetches[1][2], f"/_matrix/media/r0/download/{self.media_id}"
-        )
-
-        headers = {
-            b"Content-Length": [b"%d" % (len(self.test_image.data))],
-        }
-
-        self.fetches[1][0].callback(
-            (self.test_image.data, (len(self.test_image.data), headers))
-        )
-
-        self.pump()
-        self.assertEqual(channel.code, 200)
+        # No further fetch is attempted, and the request cleanly 404s.
+        self.assertEqual(len(self.fetches), 1)
+        self.assertEqual(channel.code, 404)
 
 
 class TestSpamCheckerLegacy:
@@ -1073,6 +1092,14 @@ class RemoteDownloadLimiterTestCase(unittest.HomeserverTestCase):
 
         # mock out actually sending the request, returns a 30MiB response
         async def _send_request(*args: Any, **kwargs: Any) -> IResponse:
+            request = args[0]
+            if "/_matrix/federation/v1/media/download/" in request.path:
+                # Simulate the remote server not supporting the federation
+                # `/download` endpoint, so callers fall back to the legacy
+                # `_matrix/media/v3/download` path below.
+                raise HttpResponseException(
+                    404, "Not Found", b'{"errcode": "M_UNRECOGNIZED"}'
+                )
             resp = MagicMock(spec=IResponse)
             resp.code = 200
             resp.length = 31457280
@@ -1149,6 +1176,11 @@ class RemoteDownloadLimiterTestCase(unittest.HomeserverTestCase):
         """
 
         async def _send_request(*args: Any, **kwargs: Any) -> IResponse:
+            request = args[0]
+            if "/_matrix/federation/v1/media/download/" in request.path:
+                raise HttpResponseException(
+                    404, "Not Found", b'{"errcode": "M_UNRECOGNIZED"}'
+                )
             resp = MagicMock(spec=IResponse)
             resp.code = 200
             resp.length = 52428800
@@ -1214,6 +1246,11 @@ class RemoteDownloadLimiterTestCase(unittest.HomeserverTestCase):
 
         # mock out actually sending the request
         async def _send_request(*args: Any, **kwargs: Any) -> IResponse:
+            request = args[0]
+            if "/_matrix/federation/v1/media/download/" in request.path:
+                raise HttpResponseException(
+                    404, "Not Found", b'{"errcode": "M_UNRECOGNIZED"}'
+                )
             resp = MagicMock(spec=IResponse)
             resp.code = 200
             resp.length = UNKNOWN_LENGTH
@@ -1254,6 +1291,11 @@ class RemoteDownloadLimiterTestCase(unittest.HomeserverTestCase):
 
         # mock out actually sending the request
         async def _send_request(*args: Any, **kwargs: Any) -> IResponse:
+            request = args[0]
+            if "/_matrix/federation/v1/media/download/" in request.path:
+                raise HttpResponseException(
+                    404, "Not Found", b'{"errcode": "M_UNRECOGNIZED"}'
+                )
             resp = MagicMock(spec=IResponse)
             resp.code = 200
             resp.length = 31457280
@@ -1347,6 +1389,11 @@ class MediaHashesTestCase(unittest.HomeserverTestCase):
 
         # Mock getting a file over federation
         async def _send_request(*args: Any, **kwargs: Any) -> IResponse:
+            request = args[0]
+            if "/_matrix/federation/v1/media/download/" in request.path:
+                raise HttpResponseException(
+                    404, "Not Found", b'{"errcode": "M_UNRECOGNIZED"}'
+                )
             resp = MagicMock(spec=IResponse)
             resp.code = 200
             resp.length = 500

@@ -98,6 +98,15 @@ class DownloadResource(RestServlet):
                 return
 
             ip_address = request.getClientAddress().host
+            # Fetch remote media via the authenticated federation `/download`
+            # endpoint rather than the deprecated unauthenticated cross-server
+            # endpoint: many homeservers (matrix.org since Sept 2024) have
+            # stopped serving the deprecated endpoint entirely, which would
+            # otherwise make this legacy, unauthenticated client endpoint
+            # unable to fetch any of their media. This only affects how
+            # Synapse reaches the *origin* server (using our own federation
+            # signing key) - the response served here to the caller remains
+            # fully unauthenticated, same as always.
             await self.media_repo.get_remote_media(
                 request,
                 server_name,
@@ -105,6 +114,6 @@ class DownloadResource(RestServlet):
                 file_name,
                 max_timeout_ms,
                 ip_address,
-                False,
+                use_federation_endpoint=True,
                 allow_authenticated=False,
             )
