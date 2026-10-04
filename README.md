@@ -70,7 +70,14 @@ in [SYNACK.md](SYNACK.md).
 
 ## License
 
-SynACK is distributed under the same license as Synapse, the
-[GNU Affero General Public License v3.0 or later](LICENSE-AGPL-3.0). Synapse is
-developed by Element and the Matrix.org Foundation; SynACK is not affiliated
-with or endorsed by either.
+SynACK is licensed only under the
+[GNU Affero General Public License v3.0 or later](LICENSE-AGPL-3.0).
+
+Upstream Synapse is also offered by Element under a separate commercial
+license. That option does not exist for SynACK: the commercial license file and
+the license metadata that referred to it have been removed, and the dual
+licensing described in [README.rst](README.rst) applies to Element's Synapse,
+not to this fork.
+
+Synapse is developed by Element and the Matrix.org Foundation. SynACK is not
+affiliated with or endorsed by either.

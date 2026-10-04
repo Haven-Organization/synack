@@ -182,7 +182,7 @@ ENV SYNAPSE_VERSION_STRING=${SYNAPSE_VERSION_STRING}
 LABEL org.opencontainers.image.url='https://github.com/element-hq/synapse'
 LABEL org.opencontainers.image.documentation='https://element-hq.github.io/synapse/latest/'
 LABEL org.opencontainers.image.source='https://github.com/element-hq/synapse.git'
-LABEL org.opencontainers.image.licenses='AGPL-3.0-or-later OR LicenseRef-Element-Commercial'
+LABEL org.opencontainers.image.licenses='AGPL-3.0-or-later'
 
 COPY --from=runtime-deps /install-${TARGETARCH}/etc /etc
 COPY --from=runtime-deps /install-${TARGETARCH}/usr /usr

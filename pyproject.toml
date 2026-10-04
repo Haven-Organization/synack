@@ -7,7 +7,7 @@ authors = [
     { name = "Matrix.org Team and Contributors", email = "packages@matrix.org" }
 ]
 requires-python = ">=3.10.0,<4.0.0"
-license = "AGPL-3.0-or-later OR LicenseRef-Element-Commercial"
+license = "AGPL-3.0-or-later"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Topic :: Communications :: Chat",
@@ -431,7 +431,6 @@ include = [
     { path = "docs/**/*", format = "sdist" },
     { path = "INSTALL.md", format = "sdist" },
     { path = "LICENSE-AGPL-3.0", format = "sdist" },
-    { path = "LICENSE-COMMERCIAL", format = "sdist" },
     { path = "mypy.ini", format = "sdist" },
     { path = "scripts-dev/**/*", format = "sdist" },
     { path = "synmark/**/*", format = "sdist" },

@@ -21,6 +21,12 @@ pull requests. If upstream changes that file, the merge reports a
 modify/delete conflict; resolve it by keeping the file deleted
 (`git rm .github/dependabot.yml`).
 
+SynACK is AGPL only. `LICENSE-COMMERCIAL` is deleted and the license fields in
+`pyproject.toml`, `docker/Dockerfile` and `debian/copyright` name only
+`AGPL-3.0-or-later`. If an upstream merge touches those lines or restores the
+file, keep the AGPL-only version. Copyright and license headers inside source
+files are upstream's and are left as they are.
+
 ## Seeing what SynACK changes
 
 ```sh
