@@ -1032,6 +1032,131 @@ class SpamCheckerTestCase(unittest.HomeserverTestCase):
         )
 
 
+class RemoteMediaFallbackTestCase(unittest.HomeserverTestCase):
+    """Tests for the custom remote_media_fetch_fallback config: fetching
+    remote media via a trusted third-party homeserver's own client-server
+    media API when our own federation fetch fails outright."""
+
+    servlets = [media.register_servlets]
+
+    def make_homeserver(self, reactor: MemoryReactor, clock: Clock) -> HomeServer:
+        async def federation_get_file(
+            destination: str,
+            media_id: str,
+            output_stream: BinaryIO,
+            download_ratelimiter: Ratelimiter,
+            ip_address: Any,
+            max_size: int,
+            args: QueryParams | None = None,
+            retry_on_dns_fail: bool = True,
+            ignore_backoff: bool = False,
+            follow_redirects: bool = False,
+        ) -> "Deferred[tuple[int, dict[bytes, list[bytes]], bytes]]":
+            """Simulate the origin server being unreachable (e.g. a WAF
+            blocking us), triggering Synapse's own federation->legacy
+            fallback, which we also fail below."""
+            raise HttpResponseException(502, "Bad Gateway", b"{}")
+
+        async def get_file(
+            destination: str,
+            path: str,
+            output_stream: BinaryIO,
+            download_ratelimiter: Ratelimiter,
+            ip_address: Any,
+            max_size: int,
+            args: QueryParams | None = None,
+            retry_on_dns_fail: bool = True,
+            ignore_backoff: bool = False,
+            follow_redirects: bool = False,
+        ) -> "Deferred[tuple[int, dict[bytes, list[bytes]]]]":
+            raise HttpResponseException(502, "Bad Gateway", b"{}")
+
+        client = Mock()
+        client.federation_get_file = federation_get_file
+        client.get_file = get_file
+
+        config = self.default_config()
+
+        self.storage_path = self.mktemp()
+        self.media_store_path = self.mktemp()
+        os.mkdir(self.storage_path)
+        os.mkdir(self.media_store_path)
+        config["media_store_path"] = self.media_store_path
+
+        provider_config = {
+            "module": "synapse.media.storage_provider.FileStorageProviderBackend",
+            "store_local": True,
+            "store_synchronous": False,
+            "store_remote": True,
+            "config": {"directory": self.storage_path},
+        }
+        config["media_storage_providers"] = [provider_config]
+        config["enable_authenticated_media"] = False
+        config["remote_media_fetch_fallback"] = {
+            "enabled": True,
+            "homeserver_url": "https://fallback.example.org",
+            "access_token": "test_fallback_token",
+        }
+
+        return self.setup_test_homeserver(config=config, federation_http_client=client)
+
+    def create_resource_dict(self) -> dict[str, Resource]:
+        resources = super().create_resource_dict()
+        resources["/_matrix/media"] = self.hs.get_media_repository_resource()
+        return resources
+
+    def test_fallback_used_when_primary_fetch_fails(self) -> None:
+        media_repo = self.hs.get_media_repository()
+        content = b"fallback content" * 100
+
+        async def fake_get_file(
+            url: str,
+            output_stream: BinaryIO,
+            max_size: int | None = None,
+            headers: Any = None,
+            is_allowed_content_type: Any = None,
+        ) -> tuple[int, dict[bytes, list[bytes]], str, int]:
+            self.assertEqual(
+                url,
+                "https://fallback.example.org/_matrix/client/v1/media/download/"
+                "remote.example/abcdef",
+            )
+            self.assertEqual(headers[b"Authorization"], [b"Bearer test_fallback_token"])
+            output_stream.write(content)
+            return (len(content), {b"Content-Type": [b"image/png"]}, url, 200)
+
+        media_repo.fallback_http_client.get_file = fake_get_file  # type: ignore[method-assign]
+
+        channel = self.make_request(
+            "GET",
+            "/_matrix/media/v3/download/remote.example/abcdef",
+            shorthand=False,
+        )
+        self.assertEqual(channel.code, 200)
+        self.assertEqual(channel.result["body"], content)
+
+    def test_no_fallback_attempted_when_disabled(self) -> None:
+        media_repo = self.hs.get_media_repository()
+        media_repo.hs.config.media.remote_media_fetch_fallback_enabled = False
+
+        called = False
+
+        async def fake_get_file(*args: Any, **kwargs: Any) -> Any:
+            nonlocal called
+            called = True
+            raise AssertionError("fallback should not have been attempted")
+
+        media_repo.fallback_http_client.get_file = fake_get_file  # type: ignore[method-assign]
+
+        channel = self.make_request(
+            "GET",
+            "/_matrix/media/v3/download/remote.example/abcdef",
+            shorthand=False,
+        )
+        self.assertEqual(channel.code, 502)
+        self.assertFalse(called)
+
+
 class RemoteDownloadLimiterTestCase(unittest.HomeserverTestCase):
     def make_homeserver(self, reactor: MemoryReactor, clock: Clock) -> HomeServer:
         config = self.default_config()

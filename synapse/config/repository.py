@@ -379,6 +379,32 @@ class ContentRepositoryConfig(Config):
             + MEDIA_UPLOAD_LIMIT_EXCEEDED_PATH.lstrip("/")
         )
 
+        # Custom (non-spec) fallback for fetching remote media that our own
+        # federation fetch can't reach (e.g. an origin server's WAF blocks
+        # our IP specifically). If configured, a remote-media fetch that
+        # fails outright is retried via a trusted third-party homeserver's
+        # own authenticated client-server media API, using a personal
+        # access token on that homeserver - since a well-connected
+        # homeserver may not be blocked by the same origin even when we are.
+        remote_media_fetch_fallback = config.get("remote_media_fetch_fallback") or {}
+        self.remote_media_fetch_fallback_enabled = remote_media_fetch_fallback.get(
+            "enabled", False
+        )
+        self.remote_media_fetch_fallback_homeserver_url = (
+            remote_media_fetch_fallback.get("homeserver_url", "").rstrip("/")
+        )
+        self.remote_media_fetch_fallback_access_token = remote_media_fetch_fallback.get(
+            "access_token"
+        )
+        if self.remote_media_fetch_fallback_enabled and not (
+            self.remote_media_fetch_fallback_homeserver_url
+            and self.remote_media_fetch_fallback_access_token
+        ):
+            raise ConfigError(
+                "remote_media_fetch_fallback.enabled is true but homeserver_url "
+                "and/or access_token is missing"
+            )
+
     def generate_config_section(self, data_dir_path: str, **kwargs: Any) -> str:
         assert data_dir_path is not None
         media_store = os.path.join(data_dir_path, "media_store")

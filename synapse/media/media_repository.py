@@ -100,6 +100,7 @@ class MediaRepository:
         self.hs = hs
         self.auth = hs.get_auth()
         self.client = hs.get_federation_client()
+        self.fallback_http_client = hs.get_proxied_http_client()
         self.clock = hs.get_clock()
         self.server_name = hs.hostname
         self.store = hs.get_datastores().main
@@ -813,7 +814,17 @@ class MediaRepository:
                 )
 
         except SynapseError:
-            raise
+            if self.hs.config.media.remote_media_fetch_fallback_enabled:
+                # Covers both "couldn't reach the origin at all" (502) and a
+                # 404 the origin gave us directly - retrying via the fallback
+                # is harmless in the 404 case (it'll just 404 too) and can
+                # recover the 502 case, e.g. a WAF blocking our IP
+                # specifically but not the fallback homeserver's.
+                media_info = await self._download_remote_file_via_fallback_homeserver(
+                    server_name, media_id
+                )
+            else:
+                raise
         except Exception as e:
             # If this is a constraint violation, it means another worker
             # downloaded the media first. We should fetch the existing media info.
@@ -1109,6 +1120,100 @@ class MediaRepository:
         )
 
         logger.debug("Stored remote media in file %r", fname)
+
+        if self.hs.config.media.enable_authenticated_media:
+            authenticated = True
+        else:
+            authenticated = False
+
+        return RemoteMedia(
+            media_origin=server_name,
+            media_id=media_id,
+            media_type=media_type,
+            media_length=length,
+            upload_name=upload_name,
+            created_ts=time_now_ms,
+            filesystem_id=file_id,
+            last_access_ts=time_now_ms,
+            quarantined_by=None,
+            authenticated=authenticated,
+            sha256=sha256writer.hexdigest(),
+        )
+
+    async def _download_remote_file_via_fallback_homeserver(
+        self,
+        server_name: str,
+        media_id: str,
+    ) -> RemoteMedia:
+        """Fetch remote media via a trusted third-party homeserver's own
+        authenticated client-server media API, using a personal access
+        token on that homeserver (`remote_media_fetch_fallback` config).
+
+        This exists for origin servers that reject fetches from us
+        specifically (e.g. a WAF blocking our IP ranges) but would serve
+        the same content to a large, well-connected homeserver we have our
+        own account on. Only called after a normal federation-based fetch
+        has already failed outright; not a replacement for it.
+
+        Note: unlike `_download_remote_file`/`_federation_download_remote_file`,
+        this doesn't consume `download_ratelimiter` itself. The normal fetch
+        attempt that necessarily preceded it already did, so a client can't
+        get more than one fallback attempt per rate-limited primary attempt.
+        """
+        file_id = random_string(24)
+        file_info = FileInfo(server_name=server_name, file_id=file_id)
+
+        homeserver_url = self.hs.config.media.remote_media_fetch_fallback_homeserver_url
+        access_token = self.hs.config.media.remote_media_fetch_fallback_access_token
+        fallback_url = (
+            f"{homeserver_url}/_matrix/client/v1/media/download/"
+            f"{server_name}/{media_id}"
+        )
+
+        async with self.media_storage.store_into_file(file_info) as (f, fname):
+            sha256writer = SHA256TransparentIOWriter(f)
+            try:
+                length, headers, _uri, _code = await self.fallback_http_client.get_file(
+                    fallback_url,
+                    output_stream=sha256writer.wrap(),
+                    max_size=self.max_upload_size,
+                    headers={b"Authorization": [f"Bearer {access_token}".encode()]},
+                )
+            except Exception as e:
+                logger.warning(
+                    "Fallback fetch of remote media %s/%s via %s failed: %s",
+                    server_name,
+                    media_id,
+                    homeserver_url,
+                    e,
+                )
+                raise SynapseError(502, "Failed to fetch remote media via fallback")
+
+            if b"Content-Type" in headers:
+                media_type = headers[b"Content-Type"][0].decode("ascii")
+            else:
+                media_type = "application/octet-stream"
+            upload_name = get_filename_from_headers(headers)
+            time_now_ms = self.clock.time_msec()
+
+        await self._store_remote_media_with_cleanup(
+            server_name=server_name,
+            media_id=media_id,
+            media_type=media_type,
+            time_now_ms=time_now_ms,
+            upload_name=upload_name,
+            media_length=length,
+            filesystem_id=file_id,
+            sha256=sha256writer.hexdigest(),
+            fname=fname,
+        )
+
+        logger.info(
+            "Fetched remote media %s/%s via fallback homeserver %s",
+            server_name,
+            media_id,
+            homeserver_url,
+        )
 
         if self.hs.config.media.enable_authenticated_media:
             authenticated = True
