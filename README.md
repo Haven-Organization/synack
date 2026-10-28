@@ -4,7 +4,7 @@ SynACK is a fork of [Synapse](https://github.com/element-hq/synapse), the
 Matrix homeserver, with a small set of meaningful, opinionated changes.
 
 It tracks upstream Synapse releases and is currently based on
-**Synapse v1.160.0**. Everything not listed below behaves exactly like stock
+**Synapse v1.164.1**. Everything not listed below behaves exactly like stock
 Synapse, so the [upstream documentation](https://element-hq.github.io/synapse/latest/)
 applies as is. The original Synapse README is kept in
 [README.rst](README.rst).
