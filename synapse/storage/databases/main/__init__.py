@@ -86,6 +86,7 @@ from .tags import TagsStore
 from .task_scheduler import TaskSchedulerWorkerStore
 from .transactions import TransactionWorkerStore
 from .ui_auth import UIAuthStore
+from .upload_size_override import UploadSizeOverrideStore
 from .user_directory import UserDirectoryStore
 from .user_erasure_store import UserErasureStore
 
@@ -117,6 +118,7 @@ class UserPaginateResponse:
 class DataStore(
     EventsBackgroundUpdatesStore,
     ExperimentalFeaturesStore,
+    UploadSizeOverrideStore,
     DeviceStore,
     RoomMemberStore,
     RoomStore,

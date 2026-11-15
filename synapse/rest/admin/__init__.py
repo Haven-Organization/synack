@@ -96,6 +96,7 @@ from synapse.rest.admin.statistics import (
     LargestRoomsStatistics,
     UserMediaStatisticsRestServlet,
 )
+from synapse.rest.admin.upload_size_override import UploadSizeOverrideRestServlet
 from synapse.rest.admin.user_reports import (
     UserReportDetailRestServlet,
     UserReportsRestServlet,
@@ -319,6 +320,7 @@ def register_servlets(hs: "HomeServer", http_server: HttpServer) -> None:
     ForwardExtremitiesRestServlet(hs).register(http_server)
     RoomEventContextServlet(hs).register(http_server)
     RateLimitRestServlet(hs).register(http_server)
+    UploadSizeOverrideRestServlet(hs).register(http_server)
     UsernameAvailableRestServlet(hs).register(http_server)
     if not auth_delegated:
         ListRegistrationTokensRestServlet(hs).register(http_server)

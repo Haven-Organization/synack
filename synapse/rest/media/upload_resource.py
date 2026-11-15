@@ -49,7 +49,6 @@ class BaseUploadServlet(RestServlet):
         self.store = hs.get_datastores().main
         self.server_name = hs.hostname
         self.auth = hs.get_auth()
-        self.max_upload_size = hs.config.media.max_upload_size
         self._media_repository_callbacks = (
             hs.get_module_api_callbacks().media_repository
         )
@@ -64,7 +63,7 @@ class BaseUploadServlet(RestServlet):
             content_length = int(raw_content_length)
         except ValueError:
             raise SynapseError(msg="Content-Length value is invalid", code=400)
-        if content_length > self.max_upload_size:
+        if content_length > await self.store.get_max_upload_size_for_user(user_id):
             raise SynapseError(
                 msg="Upload request body is too large",
                 code=413,

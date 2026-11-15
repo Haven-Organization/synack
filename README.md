@@ -55,6 +55,48 @@ remote_media_fetch_fallback:
 The fallback is only tried after the normal fetch has failed. The access token
 is a credential for that account, so keep your `homeserver.yaml` private.
 
+### 4. Per-user upload size limits
+
+Server admins can give individual users a different maximum upload size than
+`max_upload_size`, larger or smaller, through an admin API that works like
+the [rate limit override API](https://element-hq.github.io/synapse/latest/admin_api/user_admin_api.html#override-ratelimiting-for-users).
+Overrides are stored in the database and take effect immediately.
+
+```sh
+# Set (size in bytes)
+curl -X POST -H "Authorization: Bearer <admin token>" \
+  -d '{"max_upload_size": 2147483648}' \
+  https://example.com/_synapse/admin/v1/users/@alice:example.com/override_upload_size
+
+# Show (`{}` when the user has no override)
+curl -H "Authorization: Bearer <admin token>" \
+  https://example.com/_synapse/admin/v1/users/@alice:example.com/override_upload_size
+
+# Remove, returning the user to `max_upload_size`
+curl -X DELETE -H "Authorization: Bearer <admin token>" \
+  https://example.com/_synapse/admin/v1/users/@alice:example.com/override_upload_size
+```
+
+The largest value the API accepts is set in the config, and defaults to
+`max_upload_size`, so overrides can only lower the limit until this is
+raised:
+
+```yaml
+max_upload_size: 50M
+max_upload_size_override_limit: 4G
+```
+
+Synapse checks each request's size against a cap fixed at startup, so this
+config value is what lets the large uploads through; it also raises that cap
+for all requests on the listener. A reverse proxy in front of Synapse has its
+own limit (nginx `client_max_body_size`), which must also allow the size.
+
+- Only local users can have an override.
+- Applies to `/upload` and to the asynchronous `/create` + `PUT /upload`.
+- `/_matrix/client/v1/media/config` (and the legacy `/_matrix/media/v3/config`)
+  reports each user's own limit. A `get_media_config_for_user` module callback,
+  if configured, still takes precedence.
+
 ## Installing
 
 Build and install SynACK the same way as Synapse from source; see the

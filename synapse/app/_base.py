@@ -907,6 +907,10 @@ def max_request_body_size(config: HomeServerConfig) -> int:
 
     # if we have a media repo enabled, we may need to allow larger uploads than that
     if config.media.can_load_media_repo:
-        max_request_size = max(max_request_size, config.media.max_upload_size)
+        max_request_size = max(
+            max_request_size,
+            config.media.max_upload_size,
+            config.media.max_upload_size_override_limit,
+        )
 
     return max_request_size

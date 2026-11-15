@@ -112,6 +112,9 @@ from synapse.storage.databases.main.thread_subscriptions import (
 )
 from synapse.storage.databases.main.transactions import TransactionWorkerStore
 from synapse.storage.databases.main.ui_auth import UIAuthWorkerStore
+from synapse.storage.databases.main.upload_size_override import (
+    UploadSizeOverrideStore,
+)
 from synapse.storage.databases.main.user_directory import UserDirectoryStore
 from synapse.storage.databases.main.user_erasure_store import UserErasureWorkerStore
 from synapse.types import ISynapseReactor
@@ -169,6 +172,7 @@ class GenericWorkerStore(
     SessionStore,
     TaskSchedulerWorkerStore,
     ExperimentalFeaturesStore,
+    UploadSizeOverrideStore,
     SlidingSyncStore,
     DelayedEventsStore,
 ):
