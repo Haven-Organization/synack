@@ -53,6 +53,9 @@ from synapse.rest.admin.devices import (
     DeviceRestServlet,
     DevicesRestServlet,
 )
+from synapse.rest.admin.download_size_override import (
+    DownloadSizeOverrideRestServlet,
+)
 from synapse.rest.admin.event_reports import (
     EventReportDetailRestServlet,
     EventReportsRestServlet,
@@ -321,6 +324,7 @@ def register_servlets(hs: "HomeServer", http_server: HttpServer) -> None:
     RoomEventContextServlet(hs).register(http_server)
     RateLimitRestServlet(hs).register(http_server)
     UploadSizeOverrideRestServlet(hs).register(http_server)
+    DownloadSizeOverrideRestServlet(hs).register(http_server)
     UsernameAvailableRestServlet(hs).register(http_server)
     if not auth_delegated:
         ListRegistrationTokensRestServlet(hs).register(http_server)

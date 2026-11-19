@@ -69,6 +69,9 @@ from synapse.storage.databases.main.delayed_events import DelayedEventsStore
 from synapse.storage.databases.main.deviceinbox import DeviceInboxWorkerStore
 from synapse.storage.databases.main.devices import DeviceWorkerStore
 from synapse.storage.databases.main.directory import DirectoryWorkerStore
+from synapse.storage.databases.main.download_size_override import (
+    DownloadSizeOverrideStore,
+)
 from synapse.storage.databases.main.e2e_room_keys import EndToEndRoomKeyStore
 from synapse.storage.databases.main.event_federation import EventFederationWorkerStore
 from synapse.storage.databases.main.event_push_actions import (
@@ -173,6 +176,7 @@ class GenericWorkerStore(
     TaskSchedulerWorkerStore,
     ExperimentalFeaturesStore,
     UploadSizeOverrideStore,
+    DownloadSizeOverrideStore,
     SlidingSyncStore,
     DelayedEventsStore,
 ):

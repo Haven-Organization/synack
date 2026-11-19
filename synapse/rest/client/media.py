@@ -159,7 +159,7 @@ class ThumbnailResource(RestServlet):
     ) -> None:
         # Validate the server name, raising if invalid
         parse_and_validate_server_name(server_name)
-        await self.auth.get_user_by_req(request, allow_guest=True)
+        requester = await self.auth.get_user_by_req(request, allow_guest=True)
 
         set_cors_headers(request)
         set_corp_headers(request)
@@ -222,6 +222,7 @@ class ThumbnailResource(RestServlet):
                     ip_address,
                     True,
                     animated=animated,
+                    user_id=requester.user.to_string(),
                 )
             else:
                 await self.thumbnailer.respond_remote_thumbnail(
@@ -235,6 +236,7 @@ class ThumbnailResource(RestServlet):
                     max_timeout_ms,
                     ip_address,
                     True,
+                    user_id=requester.user.to_string(),
                 )
             self.media_repo.mark_recently_accessed(server_name, media_id)
 
@@ -320,6 +322,7 @@ class DownloadResource(RestServlet):
                 ip_address,
                 True,
                 bypass_quarantine=bypass_quarantine,
+                user_id=requester.user.to_string(),
             )
 
 

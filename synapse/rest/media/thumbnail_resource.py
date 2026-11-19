@@ -128,6 +128,7 @@ class ThumbnailResource(RestServlet):
                 return
 
             ip_address = request.getClientAddress().host
+            user_id = await self.media_repo.get_optional_requester_user_id(request)
             # Fetch remote media via the authenticated federation endpoint
             # (using our own federation signing key) even though this
             # client-facing endpoint itself stays fully unauthenticated - the
@@ -147,6 +148,7 @@ class ThumbnailResource(RestServlet):
                     use_federation=True,
                     allow_authenticated=False,
                     animated=animated,
+                    user_id=user_id,
                 )
             else:
                 await self.thumbnail_provider.respond_remote_thumbnail(
@@ -161,5 +163,6 @@ class ThumbnailResource(RestServlet):
                     ip_address,
                     use_federation=True,
                     allow_authenticated=False,
+                    user_id=user_id,
                 )
             self.media_repo.mark_recently_accessed(server_name, media_id)

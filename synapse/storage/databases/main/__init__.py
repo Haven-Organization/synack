@@ -51,6 +51,7 @@ from .delayed_events import DelayedEventsStore
 from .deviceinbox import DeviceInboxStore
 from .devices import DeviceStore
 from .directory import DirectoryStore
+from .download_size_override import DownloadSizeOverrideStore
 from .e2e_room_keys import EndToEndRoomKeyStore
 from .end_to_end_keys import EndToEndKeyStore
 from .event_federation import EventFederationStore
@@ -119,6 +120,7 @@ class DataStore(
     EventsBackgroundUpdatesStore,
     ExperimentalFeaturesStore,
     UploadSizeOverrideStore,
+    DownloadSizeOverrideStore,
     DeviceStore,
     RoomMemberStore,
     RoomStore,

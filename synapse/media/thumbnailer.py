@@ -563,6 +563,7 @@ class ThumbnailProvider:
         use_federation: bool,
         allow_authenticated: bool = True,
         animated: bool = False,
+        user_id: str | None = None,
     ) -> None:
         media_info = await self.media_repo.get_remote_media_info(
             server_name,
@@ -571,6 +572,7 @@ class ThumbnailProvider:
             ip_address,
             use_federation,
             allow_authenticated,
+            user_id=user_id,
         )
         if not media_info:
             respond_404(request)
@@ -646,6 +648,7 @@ class ThumbnailProvider:
         ip_address: str,
         use_federation: bool,
         allow_authenticated: bool = True,
+        user_id: str | None = None,
     ) -> None:
         # TODO: Don't download the whole remote file
         # We should proxy the thumbnail from the remote server instead of
@@ -657,6 +660,7 @@ class ThumbnailProvider:
             ip_address,
             use_federation,
             allow_authenticated,
+            user_id=user_id,
         )
         if not media_info:
             return

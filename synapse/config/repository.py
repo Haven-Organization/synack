@@ -201,6 +201,11 @@ class ContentRepositoryConfig(Config):
         self.max_upload_size_override_limit = self.parse_size(
             config.get("max_upload_size_override_limit", self.max_upload_size)
         )
+        # SynACK: the largest per-user remote media download size the admin API
+        # will accept. Remote fetches are otherwise capped at `max_upload_size`.
+        self.max_download_size_override_limit = self.parse_size(
+            config.get("max_download_size_override_limit", self.max_upload_size)
+        )
         self.max_image_pixels = self.parse_size(config.get("max_image_pixels", "32M"))
         self.max_spider_size = self.parse_size(config.get("max_spider_size", "10M"))
 

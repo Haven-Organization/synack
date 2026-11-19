@@ -97,6 +97,43 @@ own limit (nginx `client_max_body_size`), which must also allow the size.
   reports each user's own limit. A `get_media_config_for_user` module callback,
   if configured, still takes precedence.
 
+### 5. Per-user download size limits
+
+Synapse refuses to fetch remote media larger than `max_upload_size` from other
+servers. SynACK lets admins give individual users a different limit, larger or
+smaller, with an admin API that works the same way as the upload one:
+
+```sh
+# Set (size in bytes)
+curl -X POST -H "Authorization: Bearer <admin token>" \
+  -d '{"max_download_size": 2147483648}' \
+  https://example.com/_synapse/admin/v1/users/@alice:example.com/override_download_size
+
+# Show (`{}` when the user has no override)
+curl -H "Authorization: Bearer <admin token>" \
+  https://example.com/_synapse/admin/v1/users/@alice:example.com/override_download_size
+
+# Remove, returning the user to `max_upload_size`
+curl -X DELETE -H "Authorization: Bearer <admin token>" \
+  https://example.com/_synapse/admin/v1/users/@alice:example.com/override_download_size
+```
+
+The largest value the API accepts defaults to `max_upload_size`, and is raised
+in the config:
+
+```yaml
+max_download_size_override_limit: 4G
+```
+
+- The limit decides how large a file Synapse fetches from the remote server
+  when that user is the first to ask for it. Once fetched, the file is cached
+  and served to everyone, as usual.
+- Applies to remote downloads and thumbnails. The authenticated
+  `/_matrix/client/v1/media` endpoints always know the user. The legacy
+  `/_matrix/media` endpoints use the user's limit only when the request carries
+  a valid access token, and the default otherwise.
+- Only local users can have an override.
+
 ## Installing
 
 Build and install SynACK the same way as Synapse from source; see the

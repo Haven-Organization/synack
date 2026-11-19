@@ -49,24 +49,31 @@ Current patches and the files they touch:
 | Legacy media endpoints fetch over federation | `synapse/rest/media/download_resource.py`, `synapse/rest/media/thumbnail_resource.py` |
 | Remote media fallback through another homeserver | `synapse/config/repository.py`, `synapse/media/media_repository.py` |
 | Per-user upload size overrides | `synapse/storage/schema/main/delta/95/50_synack_upload_size_override.sql`, `synapse/storage/databases/main/upload_size_override.py`, `synapse/storage/databases/main/__init__.py`, `synapse/app/generic_worker.py`, `synapse/rest/admin/upload_size_override.py`, `synapse/rest/admin/__init__.py`, `synapse/config/repository.py`, `synapse/app/_base.py`, `synapse/rest/media/upload_resource.py`, `synapse/rest/media/config_resource.py`, `synapse/rest/client/media.py` |
+| Per-user download size overrides | `synapse/storage/schema/main/delta/95/51_synack_download_size_override.sql`, `synapse/storage/databases/main/download_size_override.py`, `synapse/storage/databases/main/__init__.py`, `synapse/app/generic_worker.py`, `synapse/rest/admin/download_size_override.py`, `synapse/rest/admin/__init__.py`, `synapse/config/repository.py`, `synapse/media/media_repository.py`, `synapse/media/thumbnailer.py`, `synapse/rest/client/media.py`, `synapse/rest/media/download_resource.py`, `synapse/rest/media/thumbnail_resource.py` |
 
 Tests for the first three are in `tests/media/test_base.py`,
 `tests/media/test_media_storage.py` and `tests/rest/client/test_media.py`;
-upload size overrides are tested in `tests/rest/admin/test_upload_size_override.py`.
+upload and download size overrides are tested in
+`tests/rest/admin/test_upload_size_override.py` and
+`tests/rest/admin/test_download_size_override.py`.
 
 ### Database changes
 
-The upload size overrides add one table, `upload_size_override`, created by
-`synapse/storage/schema/main/delta/95/50_synack_upload_size_override.sql`.
-Stock Synapse ignores the table, so rolling back to stock Synapse of the same
+The size overrides add two tables, created by deltas in
+`synapse/storage/schema/main/delta/95/`:
+
+- `upload_size_override`, by `50_synack_upload_size_override.sql`
+- `download_size_override`, by `51_synack_download_size_override.sql`
+
+Stock Synapse ignores the tables, so rolling back to stock Synapse of the same
 version stays safe.
 
 A new database is built from the newest snapshot in
 `synapse/storage/schema/main/full_schemas/` plus the deltas after it, so a
 SynACK delta in a directory at or below that snapshot would be skipped. When
-an upstream merge adds a snapshot at or above 95, copy the SynACK delta into
-the first delta directory after the snapshot under a new file name. It uses
-`CREATE TABLE IF NOT EXISTS`, so running it twice is harmless.
+an upstream merge adds a snapshot at or above 95, copy the SynACK deltas into
+the first delta directory after the snapshot under new file names. They use
+`CREATE TABLE IF NOT EXISTS`, so running them twice is harmless.
 
 Keep this table and the list in `README.md` up to date whenever a patch is
 added, changed or dropped.
@@ -123,7 +130,8 @@ The file lists are written to `.git/synack-sync/` (`upstream-changes`,
 - Run the media tests:
 
   ```sh
-  python -m twisted.trial tests.media tests.rest.client.test_media tests.rest.admin.test_upload_size_override
+  python -m twisted.trial tests.media tests.rest.client.test_media \
+      tests.rest.admin.test_upload_size_override tests.rest.admin.test_download_size_override
   ```
 
 - Check whether `synapse/storage/schema/main/full_schemas/` gained a snapshot

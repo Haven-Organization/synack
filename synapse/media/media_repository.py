@@ -449,6 +449,22 @@ class MediaRepository:
 
         return MXCUri(self.server_name, media_id)
 
+    async def get_optional_requester_user_id(
+        self, request: SynapseRequest
+    ) -> str | None:
+        """SynACK: the user behind a request to an unauthenticated media endpoint.
+
+        Returns None when the request carries no access token or an invalid one,
+        since these endpoints don't require one.
+        """
+        if not self.auth.has_access_token(request):
+            return None
+        try:
+            requester = await self.auth.get_user_by_req(request, allow_guest=True)
+        except SynapseError:
+            return None
+        return requester.user.to_string()
+
     def respond_not_yet_uploaded(self, request: SynapseRequest) -> None:
         respond_with_json(
             request,
@@ -607,6 +623,7 @@ class MediaRepository:
         use_federation_endpoint: bool,
         allow_authenticated: bool = True,
         bypass_quarantine: bool = False,
+        user_id: str | None = None,
     ) -> None:
         """Respond to requests for remote media.
 
@@ -624,6 +641,8 @@ class MediaRepository:
             allow_authenticated: whether media marked as authenticated may be served to this
                 request
             bypass_quarantine: whether to bypass quarantine checks
+            user_id: the requesting user, if authenticated. Decides the largest
+                file fetched from the remote server (SynACK).
 
         Returns:
             Resolves once a response has successfully been written to request
@@ -644,6 +663,8 @@ class MediaRepository:
 
         self.mark_recently_accessed(server_name, media_id)
 
+        max_size = await self.store.get_max_download_size_for_user(user_id)
+
         # We linearize here to ensure that we don't try and download remote
         # media multiple times concurrently
         key = (server_name, media_id)
@@ -656,6 +677,7 @@ class MediaRepository:
                 ip_address,
                 use_federation_endpoint,
                 allow_authenticated,
+                max_size,
                 bypass_quarantine=bypass_quarantine,
             )
 
@@ -691,6 +713,7 @@ class MediaRepository:
         ip_address: str,
         use_federation: bool,
         allow_authenticated: bool,
+        user_id: str | None = None,
     ) -> RemoteMedia:
         """Gets the media info associated with the remote file, downloading
         if necessary.
@@ -705,6 +728,8 @@ class MediaRepository:
                 over the federation `/download` endpoint
             allow_authenticated: whether media marked as authenticated may be served to this
                 request
+            user_id: the requesting user, if authenticated. Decides the largest
+                file fetched from the remote server (SynACK).
 
         Returns:
             The media info of the file
@@ -714,6 +739,8 @@ class MediaRepository:
             and server_name not in self.federation_domain_whitelist
         ):
             raise FederationDeniedError(server_name)
+
+        max_size = await self.store.get_max_download_size_for_user(user_id)
 
         # We linearize here to ensure that we don't try and download remote
         # media multiple times concurrently
@@ -727,6 +754,7 @@ class MediaRepository:
                 ip_address,
                 use_federation,
                 allow_authenticated,
+                max_size,
             )
 
         # Ensure we actually use the responder so that it releases resources
@@ -745,6 +773,7 @@ class MediaRepository:
         ip_address: str,
         use_federation_endpoint: bool,
         allow_authenticated: bool,
+        max_size: int,
         bypass_quarantine: bool = False,
     ) -> tuple[Responder | None, RemoteMedia]:
         """Looks for media in local cache, if not there then attempt to
@@ -761,6 +790,7 @@ class MediaRepository:
             ip_address: the IP address of the requester
             use_federation_endpoint: whether to request the remote media over the new federation
             /download endpoint
+            max_size: the largest file to download, in bytes
             bypass_quarantine: whether to bypass quarantine checks
 
         Returns:
@@ -805,6 +835,7 @@ class MediaRepository:
                     max_timeout_ms,
                     download_ratelimiter,
                     ip_address,
+                    max_size,
                 )
             else:
                 media_info = await self._federation_download_remote_file(
@@ -813,6 +844,7 @@ class MediaRepository:
                     max_timeout_ms,
                     download_ratelimiter,
                     ip_address,
+                    max_size,
                 )
 
         except SynapseError:
@@ -823,7 +855,7 @@ class MediaRepository:
                 # recover the 502 case, e.g. a WAF blocking our IP
                 # specifically but not the fallback homeserver's.
                 media_info = await self._download_remote_file_via_fallback_homeserver(
-                    server_name, media_id
+                    server_name, media_id, max_size
                 )
             else:
                 raise
@@ -900,6 +932,7 @@ class MediaRepository:
         max_timeout_ms: int,
         download_ratelimiter: Ratelimiter,
         ip_address: str,
+        max_size: int,
     ) -> RemoteMedia:
         """Attempt to download the remote file from the given server name,
         using the given file_id as the local id.
@@ -914,6 +947,7 @@ class MediaRepository:
             download_ratelimiter: a ratelimiter limiting remote media downloads, keyed to
                 requester IP
             ip_address: the IP address of the requester
+            max_size: the largest file to download, in bytes
 
         Returns:
             The media info of the file.
@@ -931,7 +965,7 @@ class MediaRepository:
                     media_id,
                     # This implements all of BinaryIO as it has a passthrough
                     output_stream=sha256writer.wrap(),
-                    max_size=self.max_upload_size,
+                    max_size=max_size,
                     max_timeout_ms=max_timeout_ms,
                     download_ratelimiter=download_ratelimiter,
                     ip_address=ip_address,
@@ -1021,6 +1055,7 @@ class MediaRepository:
         max_timeout_ms: int,
         download_ratelimiter: Ratelimiter,
         ip_address: str,
+        max_size: int,
     ) -> RemoteMedia:
         """Attempt to download the remote file from the given server name.
         Uses the given file_id as the local id and downloads the file over the federation
@@ -1036,6 +1071,7 @@ class MediaRepository:
             download_ratelimiter: a ratelimiter limiting remote media downloads, keyed to
                 requester IP
             ip_address: the IP address of the requester
+            max_size: the largest file to download, in bytes
 
         Returns:
             The media info of the file.
@@ -1053,7 +1089,7 @@ class MediaRepository:
                     media_id,
                     # This implements all of BinaryIO as it has a passthrough
                     output_stream=sha256writer.wrap(),
-                    max_size=self.max_upload_size,
+                    max_size=max_size,
                     max_timeout_ms=max_timeout_ms,
                     download_ratelimiter=download_ratelimiter,
                     ip_address=ip_address,
@@ -1146,6 +1182,7 @@ class MediaRepository:
         self,
         server_name: str,
         media_id: str,
+        max_size: int,
     ) -> RemoteMedia:
         """Fetch remote media via a trusted third-party homeserver's own
         authenticated client-server media API, using a personal access
@@ -1178,7 +1215,7 @@ class MediaRepository:
                 length, headers, _uri, _code = await self.fallback_http_client.get_file(
                     fallback_url,
                     output_stream=sha256writer.wrap(),
-                    max_size=self.max_upload_size,
+                    max_size=max_size,
                     headers={b"Authorization": [f"Bearer {access_token}".encode()]},
                 )
             except Exception as e:

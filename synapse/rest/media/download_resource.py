@@ -116,4 +116,5 @@ class DownloadResource(RestServlet):
                 ip_address,
                 use_federation_endpoint=True,
                 allow_authenticated=False,
+                user_id=await self.media_repo.get_optional_requester_user_id(request),
             )
