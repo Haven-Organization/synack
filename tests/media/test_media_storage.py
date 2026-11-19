@@ -39,7 +39,7 @@ from twisted.web.http_headers import Headers
 from twisted.web.iweb import UNKNOWN_LENGTH, IResponse
 from twisted.web.resource import Resource
 
-from synapse.api.errors import Codes, HttpResponseException
+from synapse.api.errors import Codes, HttpResponseException, SynapseError
 from synapse.api.ratelimiting import Ratelimiter
 from synapse.events import EventBase
 from synapse.http.client import ByteWriteable
@@ -1055,7 +1055,7 @@ class RemoteMediaFallbackTestCase(unittest.HomeserverTestCase):
             """Simulate the origin server being unreachable (e.g. a WAF
             blocking us), triggering Synapse's own federation->legacy
             fallback, which we also fail below."""
-            raise HttpResponseException(502, "Bad Gateway", b"{}")
+            raise HttpResponseException(self.origin_code, "Error", b"{}")
 
         async def get_file(
             destination: str,
@@ -1069,7 +1069,10 @@ class RemoteMediaFallbackTestCase(unittest.HomeserverTestCase):
             ignore_backoff: bool = False,
             follow_redirects: bool = False,
         ) -> "Deferred[tuple[int, dict[bytes, list[bytes]]]]":
-            raise HttpResponseException(502, "Bad Gateway", b"{}")
+            raise HttpResponseException(self.origin_code, "Error", b"{}")
+
+        # What the origin server answers; tests may change it.
+        self.origin_code = 502
 
         client = Mock()
         client.federation_get_file = federation_get_file
@@ -1155,6 +1158,25 @@ class RemoteMediaFallbackTestCase(unittest.HomeserverTestCase):
         )
         self.assertEqual(channel.code, 502)
         self.assertFalse(called)
+
+    def test_origin_error_reported_when_fallback_also_fails(self) -> None:
+        """A file missing on the origin stays a 404 after the fallback fails,
+        and an unreachable origin stays a 502."""
+        media_repo = self.hs.get_media_repository()
+
+        async def failing_get_file(*args: Any, **kwargs: Any) -> Any:
+            raise SynapseError(502, "Got error 404")
+
+        media_repo.fallback_http_client.get_file = failing_get_file  # type: ignore[method-assign]
+
+        for origin_code, media_id in ((404, "missing"), (502, "unreachable")):
+            self.origin_code = origin_code
+            channel = self.make_request(
+                "GET",
+                f"/_matrix/media/v3/download/remote.example/{media_id}",
+                shorthand=False,
+            )
+            self.assertEqual(channel.code, origin_code, channel.json_body)
 
 
 class RemoteDownloadLimiterTestCase(unittest.HomeserverTestCase):

@@ -847,16 +847,23 @@ class MediaRepository:
                     max_size,
                 )
 
-        except SynapseError:
+        except SynapseError as origin_error:
             if self.hs.config.media.remote_media_fetch_fallback_enabled:
                 # Covers both "couldn't reach the origin at all" (502) and a
                 # 404 the origin gave us directly - retrying via the fallback
                 # is harmless in the 404 case (it'll just 404 too) and can
                 # recover the 502 case, e.g. a WAF blocking our IP
                 # specifically but not the fallback homeserver's.
-                media_info = await self._download_remote_file_via_fallback_homeserver(
-                    server_name, media_id, max_size
-                )
+                try:
+                    media_info = (
+                        await self._download_remote_file_via_fallback_homeserver(
+                            server_name, media_id, max_size
+                        )
+                    )
+                except SynapseError:
+                    # The fallback failing as well adds nothing: report what
+                    # the origin said, so a missing file is still a 404.
+                    raise origin_error
             else:
                 raise
         except Exception as e:
